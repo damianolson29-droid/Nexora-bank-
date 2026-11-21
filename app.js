@@ -760,39 +760,50 @@ if (button) button.disabled = false;
 updateWithdrawalMethodVisibility();
 
 // ========================================
-// DEPOSIT ADDRESSES — DEMO MODE
+// DEPOSIT ADDRESSES — SUPABASE
 // ========================================
 
-const DEMO_DEPOSIT_DETAILS = {
-  BTC: {
-    name: "Bitcoin",
-    symbol: "BTC",
-    icon: "₿",
-    className: "btc",
-    image: "BTC.JPG",
-    network: "Bitcoin network — demonstration only"
-  },
+async function loadDepositAddresses() {
+const message = byId("depositMessage");
 
-  ETH: {
-    name: "Ethereum",
-    symbol: "ETH",
-    icon: "◆",
-    className: "eth",
-    image: "ETH.JPG",
-    network: "Ethereum network — demonstration only"
-  },
+if (message) {
+  message.textContent = "Loading deposit addresses...";
+}
 
-  USDT: {
-    name: "Tether",
-    symbol: "USDT",
-    icon: "₮",
-    className: "usdt",
-    image: "USDT.JPG",
-    network: "Network not verified — demonstration only"
+try {
+  const { data, error } = await api.client
+    .from("nexora_deposit_addresses")
+    .select("asset, wallet_address")
+    .in("asset", ["BTC", "ETH", "USDT"]);
+
+  if (error) throw error;
+
+  depositAddresses = new Map(
+     (data || []).map(item => [
+        String(item.asset).toUpperCase(),
+        String(item.wallet_address || "").trim()
+     ])
+  );
+
+  updateDepositDetails();
+
+  if (message) {
+    message.textContent = selectedDepositAsset
+      ? ""
+      : "Choose a cryptocurrency to view its deposit details.";
   }
-};
+} catch (error) {
+  console.error("Deposit address loading failed:", error);
+  depositAddresses.clear();
 
-let selectedDepositAsset = null;
+  updateDepositDetails();
+
+  if (message) {
+    message.textContent =
+      "Could not load deposit addresses from Supabase.";
+  }
+}
+}
 
 // ========================================
 // DEPOSIT SCREEN CONTROLS
@@ -803,17 +814,10 @@ function showDepositAssetList() {
 
   byId("depositAssetScreen")?.classList.remove("hidden");
   byId("depositDetailsScreen")?.classList.add("hidden");
-
-  const message = byId("depositMessage");
-
-  if (message) {
-    message.textContent =
-      "Choose a cryptocurrency to view its demonstration details.";
-  }
 }
 
 function showDepositDetails(symbol) {
-  const config = DEMO_DEPOSIT_DETAILS[symbol];
+  const config = DEPOSIT_ASSETS[symbol];
 
   if (!config) return;
 
@@ -826,8 +830,7 @@ function showDepositDetails(symbol) {
 
   if (icon) {
     icon.textContent = config.icon;
-    icon.className =
-      `deposit-coin-icon ${config.className}`;
+    icon.className = `deposit-coin-icon ${config.className}`;
   }
 
   if (byId("selectedDepositName")) {
@@ -840,16 +843,31 @@ function showDepositDetails(symbol) {
 
   if (byId("depositQrTitle")) {
     byId("depositQrTitle").textContent =
-      `${config.symbol} Demonstration QR Image`;
+      `${config.symbol} Deposit QR Code`;
   }
 
   const qrImage = byId("depositQrImage");
+const qrPlaceholder = byId("depositQrPlaceholder");
 
-  if (qrImage) {
-    qrImage.src = config.image;
-    qrImage.alt =
-      `${config.symbol} illustrative QR image`;
-  }
+if (qrImage) {
+  qrImage.src = config.image;
+  qrImage.alt = `${config.symbol} QR code`;
+  qrImage.hidden = false;
+
+  qrImage.onerror = () => {
+    qrImage.hidden = true;
+
+    if (qrPlaceholder) {
+      qrPlaceholder.hidden = false;
+    }
+
+    console.error("QR image could not load:", config.image);
+  };
+}
+
+if (qrPlaceholder) {
+  qrPlaceholder.hidden = true;
+}
 
   const networkSelect = byId("depositNetwork");
 
@@ -857,75 +875,89 @@ function showDepositDetails(symbol) {
     networkSelect.replaceChildren();
 
     const option = document.createElement("option");
-
     option.value = "";
     option.textContent = config.network;
-
     networkSelect.appendChild(option);
     networkSelect.disabled = true;
   }
 
   if (byId("depositNetworkWarning")) {
     byId("depositNetworkWarning").textContent =
-      "DEMO ONLY: This screen does not provide a verified receiving address. Do not send cryptocurrency.";
+      "Confirm the exact network for this QR code and address before any transfer.";
   }
 
   updateDepositDetails();
 }
 
-// ========================================
-// UPDATE DEPOSIT DETAILS
-// ========================================
-
 function updateDepositDetails() {
-  const addressElement =
-    byId("selectedDepositAddress");
-
+  const addressElement = byId("selectedDepositAddress");
   const message = byId("depositMessage");
 
   if (!addressElement) return;
 
-  addressElement.textContent =
-    "DEMO ONLY — No real deposit address configured.";
+  if (!selectedDepositAsset) {
+    addressElement.textContent = "Address not configured yet.";
+    return;
+  }
 
-  if (message) {
-    message.textContent =
-      "This is a demonstration screen. No cryptocurrency transfers are supported.";
+  const address = depositAddresses.get(selectedDepositAsset);
+
+  if (address) {
+    addressElement.textContent = address;
+
+    if (message) message.textContent = "";
+  } else {
+    addressElement.textContent = "Address not available yet.";
+
+    if (message) {
+      message.textContent =
+        `No ${selectedDepositAsset} address was found in Supabase.`;
+    }
   }
 }
 
-// ========================================
-// DEPOSIT ASSET BUTTONS
-// ========================================
-
-document.querySelectorAll("[data-deposit-asset]")
-  .forEach(button => {
-    button.addEventListener("click", () => {
-      const symbol = button.dataset.depositAsset;
-
-      showDepositDetails(symbol);
-    });
+document.querySelectorAll("[data-deposit-asset]").forEach(button => {
+  button.addEventListener("click", () => {
+    const symbol = button.dataset.depositAsset;
+    showDepositDetails(symbol);
   });
-
-// ========================================
-// BACK TO CRYPTO
-// ========================================
+});
 
 byId("backToCrypto")?.addEventListener("click", () => {
   showDepositAssetList();
 });
 
-// ========================================
-// COPY DEPOSIT ADDRESS
-// ========================================
-
 byId("copySelectedDepositAddress")?.addEventListener(
   "click",
-  () => {
-    showNotice(
-      "Copying deposit addresses is disabled in demo mode.",
-      "info"
-    );
+  async () => {
+    const address = byId("selectedDepositAddress")
+      ?.textContent.trim();
+
+    if (
+      !address ||
+      address === "Address not available yet." ||
+      address === "Address not configured yet."
+    ) {
+      showNotice("There is no deposit address to copy.", "error");
+      return;
+    }
+
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard access is unavailable.");
+      }
+
+      await navigator.clipboard.writeText(address);
+
+      showNotice("Deposit address copied.", "success");
+    } catch (error) {
+      console.error("Copy address failed:", error);
+
+      showNotice(
+        "Could not copy automatically. Select and copy the address manually.",
+        "error"
+      );
+    }
   }
 );
 
@@ -968,49 +1000,37 @@ async function navigateTo(page) {
 
   if (page === "Withdraw") {
     updateWithdrawAsset();
-    updateWithdrawalMethodVisibility();
   }
 
   if (page === "Deposit") {
     showDepositAssetList();
+    await loadDepositAddresses();
   }
 
   if (page === "Transactions") {
     renderTransactions("allTransactions", transactions);
   }
-
-  if (page === "Exchange") {
-    showNotice(
-      "Exchange is disabled in this demonstration.",
-      "info"
-    );
-  }
-
-  if (page === "Profile") {
-    showNotice(
-      "Profile management is not enabled yet.",
-      "info"
-    );
-  }
 }
-
-// ========================================
-// NAVIGATION BUTTON EVENTS
-// ========================================
 
 document.querySelectorAll("[data-page]").forEach(button => {
   button.addEventListener("click", event => {
     event.preventDefault();
 
     const page = button.dataset.page;
-
     navigateTo(page);
+
+    if (page === "Exchange") {
+      showNotice("Exchange is disabled in this version.", "info");
+    }
+
+    if (page === "Profile") {
+      showNotice(
+        "Profile management is not enabled yet.",
+        "info"
+      );
+    }
   });
 });
-
-// ========================================
-// MOBILE MENU
-// ========================================
 
 byId("menuButton")?.addEventListener("click", () => {
   byId("sidebar")?.classList.toggle("open");
@@ -1022,11 +1042,8 @@ byId("menuButton")?.addEventListener("click", () => {
 
 async function startDashboard(user) {
   showDashboard(user);
-
   drawPortfolioChart();
-
   await navigateTo("Dashboard");
-
   await refreshAccount();
 }
 
@@ -1048,12 +1065,8 @@ async function restoreSession() {
 
       showSignup();
     }
-
   } catch (error) {
-    console.error(
-      "NEXORA session restore error:",
-      error
-    );
+    console.error("NEXORA session restore error:", error);
 
     appShell?.classList.add("hidden");
     mobileNav?.classList.add("hidden");
@@ -1068,8 +1081,10 @@ async function restoreSession() {
   }
 }
 
+restoreSession();
+
 // ========================================
-// RECEIPT DISPLAY
+// TRANSACTION RECEIPT
 // ========================================
 
 function showReceipt({
@@ -1080,46 +1095,25 @@ function showReceipt({
   date,
   status = "pending"
 }) {
-  const receiptSection = byId("receiptSection");
+  byId("receiptReference").textContent = reference;
+  byId("receiptType").textContent = type;
+  byId("receiptAsset").textContent = asset;
+  byId("receiptAmount").textContent = `${amount} ${asset}`;
 
-  if (!receiptSection) return;
+  byId("receiptDate").textContent =
+    new Date(date).toLocaleString();
 
-  byId("receiptReference").textContent =
-    reference || "Unavailable";
+  const statusElement = byId("receiptStatus");
+  statusElement.textContent = status.toUpperCase();
 
-  byId("receiptType").textContent = type || "Transaction";
-
-  byId("receiptAsset").textContent = asset || "Unknown";
-
-  byId("receiptAmount").textContent =
-    `${amount} ${asset}`;
-
-  byId("receiptDate").textContent = date
-    ? new Date(date).toLocaleString()
-    : "Date unavailable";
-
-  byId("receiptStatus").textContent =
-    String(status).toUpperCase();
-
-  receiptSection.hidden = false;
+  byId("receiptSection").hidden = false;
 }
 
-// ========================================
-// CLOSE RECEIPT
-// ========================================
-
 byId("closeReceipt")?.addEventListener("click", () => {
-  const receiptSection = byId("receiptSection");
-
-  if (receiptSection) {
-    receiptSection.hidden = true;
-  }
+  byId("receiptSection").hidden = true;
 });
 
-// ========================================
-// START APPLICATION
-// ========================================
+  });
 
-restoreSession();
 
-});
+
